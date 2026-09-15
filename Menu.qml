@@ -4626,7 +4626,7 @@ Item {
           } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Right) {
             if (!root.triggerFooterAction("primary") && displayModel.count > 0) root.cursorActive = true
             event.accepted = true
-          } else if (!root.documentActive && event.text && event.text.length === 1 && event.text.charCodeAt(0) >= 32 && event.text.charCodeAt(0) !== 127 && (event.modifiers === Qt.NoModifier || event.modifiers === Qt.ShiftModifier)) {
+          } else if (!root.documentActive && event.text && event.text.length === 1 && event.text.charCodeAt(0) >= 32 && event.text.charCodeAt(0) !== 127 && (event.modifiers === Qt.NoModifier || event.modifiers === Qt.ShiftModifier || event.modifiers === Qt.KeypadModifier || event.modifiers === (Qt.ShiftModifier | Qt.KeypadModifier))) {
             root.setFilter(root.filterText + event.text)
             event.accepted = true
           }
