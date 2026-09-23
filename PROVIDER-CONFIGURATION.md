@@ -31,17 +31,21 @@ Apps has no version-1 user configuration file. Interactive favorites are in `oma
 
 ## Files
 
-The optional `omalaunch.files.jsonc` configuration contains only the user setting:
+The optional `omalaunch.files.jsonc` configuration contains only user settings:
 
 ```jsonc
 {
   "version": 1,
   // Also search paths ignored by Git.
   "includeGitIgnored": true,
+  // Also search these directories when searching from the Files starting directory.
+  "searchRoots": ["/mnt/data", "~/Work"],
 }
 ```
 
 `includeGitIgnored` defaults to `false`. Omalaunch does not create this file when the default is used.
+
+`searchRoots` defaults to `[]` and has at most 32 unique paths. Each path starts with `/`, `~/`, or is exactly `~`, and is normalized like a favorite path. Browsing still starts at the home directory. A search typed there covers the home directory and every configured root in one combined index; a search inside any other directory stays scoped to that directory. Missing or unreadable roots are skipped when the index is built, and a root that is the same as or nested inside another root is searched once, including when the overlap is through a symbolic link. Changes apply the next time the launcher is opened.
 
 Typed favorites are in state:
 

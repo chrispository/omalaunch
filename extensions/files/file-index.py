@@ -72,7 +72,7 @@ def _emit(raw_paths: Iterator[bytes], *, limit: int = MAX_RESULTS,
 
 
 def _fd_command(
-    root: str, *, max_depth: int | None = None, directories_only: bool = False,
+    roots: list[str], *, max_depth: int | None = None, directories_only: bool = False,
     include_git_ignored: bool = False, include_hidden: bool = False,
 ) -> list[str]:
     command = [
@@ -93,14 +93,41 @@ def _fd_command(
     command.extend(["--type", "directory"])
     if max_depth is not None:
         command.extend(["--max-depth", str(max_depth)])
-    command.extend(["--", ".", root])
+    command.extend(["--", ".", *roots])
     return command
 
 
-def build_index(root: str, output_path: str, *, directories_only: bool = False,
+def _search_roots(roots: list[str]) -> list[str]:
+    """Return existing roots in order, without roots nested inside another.
+
+    fd would otherwise report nested paths twice. Real paths catch overlap
+    through symlinks, but the caller's spelling is kept for displayed results.
+    """
+    candidates: list[tuple[str, str]] = []
+    for root in roots:
+        if os.path.isdir(root):
+            candidates.append((root, os.path.realpath(root)))
+
+    def covered(real: str, other: str) -> bool:
+        return real == other or real.startswith(other.rstrip("/") + "/")
+
+    kept: list[str] = []
+    for index, (root, real) in enumerate(candidates):
+        if any(covered(real, other) for _, other in candidates[:index]):
+            continue
+        if any(covered(real, other) and real != other for _, other in candidates[index + 1:]):
+            continue
+        kept.append(root)
+    return kept
+
+
+def build_index(roots: list[str], output_path: str, *, directories_only: bool = False,
                 include_git_ignored: bool = False, include_hidden: bool = False) -> int:
     global _child
 
+    roots = _search_roots(roots)
+    if not roots:
+        return 1
     output = Path(output_path)
     output.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(
@@ -111,7 +138,7 @@ def build_index(root: str, output_path: str, *, directories_only: bool = False,
     try:
         with os.fdopen(descriptor, "wb") as destination:
             _child = subprocess.Popen(
-                _fd_command(root, directories_only=directories_only, include_git_ignored=include_git_ignored,
+                _fd_command(roots, directories_only=directories_only, include_git_ignored=include_git_ignored,
                             include_hidden=include_hidden),
                 stdout=destination,
                 stderr=subprocess.DEVNULL,
@@ -135,7 +162,7 @@ def browse(root: str, *, directories_only: bool = False,
     global _child
 
     _child = subprocess.Popen(
-        _fd_command(root, max_depth=1, directories_only=directories_only, include_git_ignored=include_git_ignored,
+        _fd_command([root], max_depth=1, directories_only=directories_only, include_git_ignored=include_git_ignored,
                     include_hidden=include_hidden),
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
@@ -217,7 +244,8 @@ def query(index_path: str, needle: str) -> int:
 
 def main(argv: list[str]) -> int:
     if len(argv) < 3:
-        print("usage: file-index.py <mode> [--hidden] [--include-git-ignored] -- <arguments>", file=sys.stderr)
+        print("usage: file-index.py <mode> [--hidden] [--include-git-ignored] -- <arguments>\n"
+              "       file-index.py index [options] -- <root> [<root> ...] <output>", file=sys.stderr)
         return 2
 
     mode = argv[1]
@@ -238,8 +266,8 @@ def main(argv: list[str]) -> int:
     include_git_ignored = "--include-git-ignored" in options
     include_hidden = "--hidden" in options
     positional = argv[:2] + values
-    if mode in ("index", "index-dirs") and len(positional) == 4:
-        return build_index(positional[2], positional[3], directories_only=mode == "index-dirs",
+    if mode in ("index", "index-dirs") and len(positional) >= 4:
+        return build_index(positional[2:-1], positional[-1], directories_only=mode == "index-dirs",
                            include_git_ignored=include_git_ignored, include_hidden=include_hidden)
     if mode in ("browse", "browse-dirs") and len(positional) == 3:
         return browse(positional[2], directories_only=mode == "browse-dirs",

@@ -49,3 +49,19 @@ assert(qml.includes("shutil.which('omarchy-agent')")
   && qml.includes("shutil.which('omarchy-default-agent')")
   && qml.includes('root.agentToolsAvailable = exitCode === 0'),
   'QML checks both optional agent tools without changing Files availability')
+
+const starredRowHints = menu.actionBarHints({ hasSelection: true, canStar: true, starred: true, canContextActions: true })
+assert(starredRowHints.some(hint => hint.id === 'actions' && hint.label === 'Actions'),
+  'starred rows on the starting view expose the Actions footer hint')
+assert(qml.includes('|| root.canOpenFavoriteActions')
+  && qml.includes('else if (root.canOpenFavoriteActions) root.openFavoriteActionPanel()')
+  && /selectedRootFileFavorite:[^]*?activeMenu === "root"[^]*?MenuModel\.fileFavorite\(/.test(qml),
+  'Ctrl+K opens the Files action panel for starred files and directories on the starting view')
+assert(/function closeActionPanel\(\) \{[^]*?if \(!root\.fileBrowserActive\) \{[^]*?root\.setFilter\(restored\.filter\)/.test(qml)
+  && qml.includes('} else if (root.actionPanelActive) root.closeActionPanel()'),
+  'closing a starting-view action panel returns to the starting view with its search restored')
+assert(/if \(fromFavorites\) \{[^]*?root\.unstarFileFavorite\(\{ path: restored\.path, type: restored\.type, capability: starCapability \}\)/.test(qml),
+  'Unstar from a starting-view action panel removes the favorite without the file browser')
+assert(qml.includes('.concat(root.additionalFileSearchRoots(path))')
+  && /function additionalFileSearchRoots\(path\) \{[^]*?extension\.config\.searchRoots/.test(qml),
+  'Files searches from the starting directory include configured searchRoots')

@@ -5,7 +5,7 @@ import fcntl, json, math, os, re, stat, tempfile, urllib.parse
 from pathlib import Path
 from typing import Any, Callable
 
-MAX_BYTES=64*1024; MAX_DEPTH=8; MAX_ITEMS=256; MAX_SAFE=9007199254740991
+MAX_BYTES=64*1024; MAX_DEPTH=8; MAX_ITEMS=256; MAX_SAFE=9007199254740991; MAX_SEARCH_ROOTS=32
 CONTROL=re.compile(r"[\x00-\x1f\x7f]"); LINK_ID=re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 PROVIDERS=("omalaunch.apps","omalaunch.files","omalaunch.quicklinks","omalaunch.web-search","omalaunch.extensions")
 CONFIG_PROVIDERS=("omalaunch.files","omalaunch.quicklinks","omalaunch.web-search")
@@ -81,7 +81,7 @@ def read_json(path:Path,*,jsonc:bool)->Any:
     depth(value); return value
 
 def config_default(provider:str)->dict[str,Any]:
-    if provider=="omalaunch.files": return {"version":1,"includeGitIgnored":False}
+    if provider=="omalaunch.files": return {"version":1,"includeGitIgnored":False,"searchRoots":[]}
     if provider=="omalaunch.quicklinks": return {"version":1,"rankByUsage":True}
     if provider=="omalaunch.web-search": return {"version":1,"rankByUsage":True,"engines":[dict(engine) for engine in DEFAULT_SEARCH_ENGINES]}
     return {}
@@ -115,13 +115,22 @@ def valid_url(v:Any)->bool:
     try: hostname.encode("idna")
     except UnicodeError: return False
     return True
-def validate_config(provider:str,value:Any)->dict[str,Any]:
+def validate_config(provider:str,value:Any,home:Path|None=None)->dict[str,Any]:
     if provider not in CONFIG_PROVIDERS: raise ValueError("provider has no configuration")
     if provider=="omalaunch.files":
-        if not isinstance(value,dict) or value.get("version")!=1 or set(value)-{"version","includeGitIgnored"}: raise ValueError("invalid files configuration")
+        if not isinstance(value,dict) or value.get("version")!=1 or set(value)-{"version","includeGitIgnored","searchRoots"}: raise ValueError("invalid files configuration")
         include=value.get("includeGitIgnored",False)
         if not isinstance(include,bool): raise ValueError("includeGitIgnored must be boolean")
-        return {"version":1,"includeGitIgnored":include}
+        raw_roots=value.get("searchRoots",[])
+        if not isinstance(raw_roots,list) or len(raw_roots)>MAX_SEARCH_ROOTS: raise ValueError("searchRoots must be a list of at most 32 paths")
+        roots=[]; home=home or Path.home()
+        for raw in raw_roots:
+            # Roots are lexical paths like favorites. Missing or unreadable
+            # directories are skipped when the index is built, not rejected here.
+            root=normalize_path(str(home)+"/" if raw=="~" else raw,home)
+            if root in roots: raise ValueError("duplicate search root")
+            roots.append(root)
+        return {"version":1,"includeGitIgnored":include,"searchRoots":roots}
     if provider=="omalaunch.quicklinks":
         if not isinstance(value,dict) or value.get("version")!=1 or set(value)-{"version","rankByUsage"}: raise ValueError("invalid Quicklinks configuration")
         track=value.get("rankByUsage",True)
@@ -228,7 +237,7 @@ def ensure_config(provider:str,home:Path)->Path:
     return path
 def load_config(provider:str,home:Path)->dict[str,Any]:
     path=config_path(provider,home)
-    return config_default(provider) if not path.exists() else validate_config(provider,read_json(path,jsonc=True))
+    return config_default(provider) if not path.exists() else validate_config(provider,read_json(path,jsonc=True),home)
 def load_state(provider:str,home:Path,state_home:Path|None=None)->dict[str,Any]:
     path=state_path(provider,home,state_home)
     return state_default(provider) if not path.exists() else validate_state(provider,read_json(path,jsonc=False),home)

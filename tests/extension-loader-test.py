@@ -162,7 +162,7 @@ elif mode == 'integer-overflow':
               "menuItemFontSize": 14,
               "extensionDevelopmentDirectory": "~/Code/extensions",
           }
-          and catalog["providerConfig"]["omalaunch.files"] == {"version": 1, "includeGitIgnored": True, "favorites": []},
+          and catalog["providerConfig"]["omalaunch.files"] == {"version": 1, "includeGitIgnored": True, "searchRoots": [], "favorites": []},
           "bounded JSONC loads core and provider configuration")
     ids = [item.get("id") for item in catalog["extensions"]]
     messages = "\n".join(catalog["diagnostics"])
