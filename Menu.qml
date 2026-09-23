@@ -253,6 +253,17 @@ Item {
     ? root.extensionForRootId(displayModel.get(root.selectedIndex).itemId) : null
   readonly property bool canRemoveSelectedExtension: root.selectedExtensionRoot
     && !root.selectedExtensionRoot.bundled && !!root.selectedExtensionRoot.pluginId
+  // Starred files and directories on the starting view (and in its global
+  // search) share the Files action panel without entering the browser first.
+  readonly property var selectedRootFileFavorite: !root.dmenuActive && !root.workflowActive
+    && !root.fileBrowserActive && !root.actionPanelActive && !root.focusedExtension
+    && root.activeMenu === "root" && root.cursorActive
+    && root.selectedIndex >= 0 && root.selectedIndex < displayModel.count
+    ? MenuModel.fileFavorite(displayModel.get(root.selectedIndex).itemId) : null
+  readonly property var selectedRootFileFavoriteExtension: root.selectedRootFileFavorite
+    ? root.filesExtensionForCapability(root.selectedRootFileFavorite.capability) : null
+  readonly property bool canOpenFavoriteActions: !!root.selectedRootFileFavoriteExtension
+    && root.selectedRootFileFavoriteExtension.available
   readonly property int previewPaneWidth: Math.round((root.cardWidth
     - card.contentLeftInset - card.contentRightInset - root.contentSpacing) / 2)
 
@@ -412,6 +423,7 @@ Item {
     canSettings: !root.dmenuActive && !root.workflowActive && !root.fileBrowserActive
       && root.activeMenu === "root",
     canContextActions: root.canRemoveSelectedExtension || root.selectedWorkflowHasActions
+      || root.canOpenFavoriteActions
       || (root.documentActive && root.activeDocument && root.activeDocument.actions.length > 0)
       || (root.selectedDynamicSearchEntry && root.selectedDynamicSearchEntry.node.actions.length > 0),
     focusedExtension: !!root.focusedExtension,
@@ -514,6 +526,7 @@ Item {
       else if (!root.workflowActive && root.selectedDynamicSearchEntry) root.openDynamicSearchActions()
       else if (root.workflowActive && !root.fileBrowserActive) root.openWorkflowActions()
       else if (root.fileBrowserActive) root.openActionPanel()
+      else if (root.canOpenFavoriteActions) root.openFavoriteActionPanel()
     } else if (id === "copy") root.copySelectedFile()
     else if (id === "star") {
       if (root.workflowActive) root.toggleSelectedWorkflowStar()
@@ -1705,6 +1718,24 @@ Item {
     return !!(extension && extension.config && extension.config.includeGitIgnored === true)
   }
 
+  // Configured searchRoots extend searches started from the Files starting
+  // directory. Browsing stays rooted there, and searches inside any other
+  // directory stay scoped to that directory.
+  function additionalFileSearchRoots(path) {
+    var extension = root.extensionByCapability("files")
+    var roots = extension && extension.config && Array.isArray(extension.config.searchRoots)
+      ? extension.config.searchRoots : []
+    var browser = root.fileBrowserExtension
+    var startPath = browser && browser.root && browser.root !== "~" ? browser.root : Quickshell.env("HOME")
+    if (roots.length === 0 || MenuModel.normalizeFavoritePath(path) !== MenuModel.normalizeFavoritePath(startPath)) return []
+    var result = []
+    for (var i = 0; i < roots.length; i++) {
+      var value = MenuModel.normalizeFavoritePath(roots[i])
+      if (value && value !== MenuModel.normalizeFavoritePath(path) && result.indexOf(value) < 0) result.push(value)
+    }
+    return result
+  }
+
   function toggleHiddenFiles() {
     root.fileBrowserShowHidden = !root.fileBrowserShowHidden
     root.resetFileIndex()
@@ -1740,7 +1771,8 @@ Item {
     fileIndexProc.indexRoot = path
     fileIndexProc.indexPath = root.fileIndexPath
     fileIndexProc.command = ["python", root.fileIndexHelper, root.directoryPickerActive ? "index-dirs" : "index"]
-      .concat(root.fileScanOptions()).concat(["--", path, fileIndexProc.indexPath])
+      .concat(root.fileScanOptions()).concat(["--", path])
+      .concat(root.additionalFileSearchRoots(path)).concat([fileIndexProc.indexPath])
     fileIndexProc.running = true
   }
 
@@ -1847,10 +1879,41 @@ Item {
     root.rebuildActionPanel()
   }
 
+  function openFavoriteActionPanel() {
+    if (!root.canOpenFavoriteActions) return
+    var favorite = root.selectedRootFileFavorite
+    var row = displayModel.get(root.selectedIndex)
+    root.invalidateExtensionQuery("opened favorite actions")
+    root.fileBrowserExtension = root.selectedRootFileFavoriteExtension
+    root.actionPanelFile = {
+      index: root.selectedIndex,
+      itemId: row.itemId,
+      path: favorite.path,
+      name: row.label,
+      type: favorite.type,
+      filter: root.filterText
+    }
+    root.filterText = ""
+    root.actionPanelActive = true
+    root.rebuildActionPanel()
+  }
+
   function closeActionPanel() {
     var restored = MenuFiles.restoredBrowserState(root.actionPanelFile)
     root.actionPanelActive = false
     root.actionPanelFile = null
+    if (!root.fileBrowserActive) {
+      // Opened from a starred row on the starting view: return there.
+      root.fileBrowserExtension = null
+      root.setFilter(restored.filter)
+      for (var i = 0; i < displayModel.count; i++) {
+        if (displayModel.get(i).itemId !== restored.itemId) continue
+        root.selectedIndex = i
+        root.revealCursor()
+        break
+      }
+      return
+    }
     root.filterText = restored.filter
     root.selectedIndex = restored.index
     root.rebuildFileDisplay()
@@ -1881,7 +1944,14 @@ Item {
     var path = root.actionPanelFile.path
     if (action === "toggle-star") {
       var restored = MenuFiles.restoredBrowserState(root.actionPanelFile)
+      var starCapability = root.fileBrowserExtension.capability
+      var fromFavorites = !root.fileBrowserActive
       root.closeActionPanel()
+      if (fromFavorites) {
+        // Starred rows only exist while starred, so this is always Unstar.
+        root.unstarFileFavorite({ path: restored.path, type: restored.type, capability: starCapability })
+        return
+      }
       root.pendingStarSelectionId = restored.itemId
       root.toggleFileFavorite(restored.path, restored.type)
       return
@@ -4572,7 +4642,8 @@ Item {
               else if (fileEscape === "parent") root.navigateFileBrowserParent()
               else if (fileEscape === "leave-picker") root.workflowBack()
               else root.leaveFileBrowser()
-            } else if (root.workflowInputActive) root.workflowBack()
+            } else if (root.actionPanelActive) root.closeActionPanel()
+            else if (root.workflowInputActive) root.workflowBack()
             else if (root.focusedExtension) root.leaveFocusedExtension()
             else if (root.filterText) root.setFilter("")
             else if (root.workflowActive) root.workflowBack()

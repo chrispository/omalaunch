@@ -9,7 +9,7 @@ with tempfile.TemporaryDirectory() as raw:
     base=pathlib.Path(raw); home=base/"home"; state=base/"state"; home.mkdir()
     env={**os.environ,"HOME":str(home),"XDG_STATE_HOME":str(state)}; os.environ["XDG_STATE_HOME"]=str(state); cli=ROOT/"libexec/provider-config"
     for provider in pc.PROVIDERS: check(pc.load_state(provider,home)==pc.state_default(provider),provider+" has missing-state defaults")
-    check(pc.load_config("omalaunch.files",home)=={"version":1,"includeGitIgnored":False},"Files has a missing-config default")
+    check(pc.load_config("omalaunch.files",home)=={"version":1,"includeGitIgnored":False,"searchRoots":[]},"Files has a missing-config default")
     check(pc.load_config("omalaunch.quicklinks",home)=={"version":1,"rankByUsage":True},"Quicklinks has an enabled missing-config default")
     check(len(pc.load_config("omalaunch.web-search",home)["engines"])==5,"Web Search has default engines")
     for extension in ("quicklinks","web-search"):
@@ -42,6 +42,9 @@ with tempfile.TemporaryDirectory() as raw:
     subprocess.run([cli,"toggle-star","omalaunch.web-search","google"],env=env,check=True)
     check(config.read_bytes()==original and quicklinks_config.read_bytes()==quicklinks_original,"UI mutations preserve JSONC comments and formatting byte for byte")
     check(pc.load("omalaunch.files",home)["includeGitIgnored"] is True,"runtime merges read-only Files configuration with state")
+    config.write_bytes(b'{"version":1,"searchRoots":["~/Projects/","/mnt/data/./media/..",],}')
+    check(pc.load_config("omalaunch.files",home)["searchRoots"]==[str(home)+"/Projects","/mnt/data"],"Files expands and normalizes configured search roots")
+    config.write_bytes(original)
     check(pc.load("omalaunch.quicklinks",home)["rankByUsage"] is False,"runtime merges read-only Quicklinks configuration with state")
     check(pc.load_state("omalaunch.files",home)["favorites"]==[{"type":"directory","path":"/tmp/docs"}],"Files stores normalized typed favorites in state")
     check(pc.load_state("omalaunch.web-search",home)=={"version":1,"globalSearchExcludedEngines":["bing"],"starredEngines":["google"]},"Web Search stores global search exclusions and stars in state")

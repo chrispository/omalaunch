@@ -138,9 +138,29 @@ with tempfile.TemporaryDirectory() as temporary:
     assert len(exact_ranked) == 100
     print("ok - exact basename matches rank before descendants and remain within the result limit")
 
+    extra = workspace / "extra-root"
+    (extra / "archive").mkdir(parents=True)
+    extra_file = extra / "archive" / "mounted-drive-notes.txt"
+    extra_file.write_text("extra", encoding="utf-8")
+    alias = workspace / "files-alias"
+    alias.symlink_to(files, target_is_directory=True)
+    multi_index = workspace / "multi-index.nul"
+    run("index", "--", str(files), str(extra), str(workspace / "missing-root"), str(beta), str(alias), str(multi_index))
+    assert run("query", str(multi_index), "mounted-drive-notes")[0]["path"] == str(extra_file)
+    notes = run("query", str(multi_index), "notes.txt")
+    assert [row["path"] for row in notes].count(str(beta / "notes.txt")) == 1
+    assert not any(row["path"].startswith(str(alias)) for row in notes)
+    print("ok - indexing combines extra roots and skips missing, nested, and aliased roots")
+
+    lone_missing = workspace / "missing-index.nul"
+    result = subprocess.run(["python", str(HELPER), "index", "--", str(workspace / "missing-root"), str(lone_missing)],
+                            capture_output=True)
+    assert result.returncode != 0 and not lone_missing.exists()
+    print("ok - indexing fails without writing an index when no root exists")
+
 # Configuration uses one explicit helper flag for both fd traversal modes.
 module = runpy.run_path(str(HELPER))
-assert "--no-ignore-vcs" in module["_fd_command"]("/tmp", include_git_ignored=True)
+assert "--no-ignore-vcs" in module["_fd_command"](["/tmp"], include_git_ignored=True)
 print("ok - includeGitIgnored adds fd --no-ignore-vcs")
-assert "--no-ignore-vcs" not in module["_fd_command"]("/tmp")
+assert "--no-ignore-vcs" not in module["_fd_command"](["/tmp"])
 print("ok - Git-ignored paths remain excluded by default")
